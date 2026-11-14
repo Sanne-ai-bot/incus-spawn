@@ -58,3 +58,19 @@ items:
     files:
       - common/src/main/resources/tools/idea-backend.yaml
     fields: [description, url.x86_64, sha256.x86_64, url.aarch64, sha256.aarch64]
+  jasolo:
+    class: mechanical
+    # Patch releases only (0.2.x; <major>.x from 1.0): a 0.x minor may rename the JASOLO_GIT_ROOTS
+    # variable the tool sets or the Maven directory it needs, and no CI job runs jasolo, so it opens an issue.
+    within: series
+    cooling: 48h
+    judgement: build
+    source:
+      type: github-asset
+      repo: mkouba/jasolo
+      asset: jasolo-{version}-runner.jar
+    verify:
+      type: asset-digest
+    files:
+      - common/src/main/resources/tools/jasolo.yaml
+    fields: [description, url, sha256]

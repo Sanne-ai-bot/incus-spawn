@@ -24,7 +24,8 @@ An item names its `class` (`mechanical`, `review`, or `judgement` by default), w
 **The engine** (`upstream/engine/upstream.sh`, with `lib.sh`, `pr.sh`, `app-token.sh` and one `source-<type>.sh` per source type) is a deterministic script that runs from `main`'s checkout only.
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
-The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
+Three of the four source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
+The fourth, `github-asset`, has no such script to reuse: it reads one release asset and the digest GitHub gives it ("The github-asset source: GitHub's digest" below).
 
 **The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
@@ -59,6 +60,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `kernel` | `appliance/kernel/build-kernel.sh` (`KERNEL_VERSION`, `KERNEL_SHA256`) | kernel.org's signed `sha256sums.asc`, through `update-kernel-pin.sh` | `signed-sums`, the committed autosigner key and pinned fingerprint | mechanical | `series` | 24h | a new series, the series' EOL (`go:design`); gate `kernel-mac-verified` |
 | `base-image` | `common/src/main/resources/images/minimal.yaml` (tag, both URLs, four sums) | `Sanne/incus-spawn-images` releases, `SHA256SUMS` and `SHA256SUMS.v2` | `publisher-sums` | mechanical | `series` (one Fedora line) | 0 (first party) | a new Fedora line (`go:build`) |
 | `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 48h | none; the tool installs whatever `idea-IU-*` unpacks to |
+| `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the URL and its sum) | `mkouba/jasolo` releases, the asset `jasolo-<version>-runner.jar` and the `digest` GitHub gives it, URL `https://github.com/mkouba/jasolo/releases/download/<tag>/<asset>` only | `asset-digest` | mechanical | `series` (`0.<minor>` below 1.0, the major from 1.0) | 48h | a new series (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -68,6 +70,36 @@ A source type may define `src_order` (versions on stdin, oldest first) wherever 
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
 Items the design inventories for later phases (Maven and Apache artifacts, the siblings' `isx-ref` and engine pins, Alpine, the CI cloud images) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+
+### The github-asset source: GitHub's digest
+
+Some publishers release on GitHub and publish no sums file and no signature: `mkouba/jasolo`, whose jar the `jasolo` tool downloads, is the first (#2206).
+The only sum anyone publishes for such an asset is the `digest` field GitHub's releases API gives it, `sha256:` and 64 hex digits.
+The `github-asset` source type (`source-github-asset.sh`) takes the sum from there and nowhere else.
+Unless `UPSTREAM_REHASH=0` it downloads the asset and refuses it when the bytes hash to anything else, as `jetbrains` does with its tarballs.
+An item names `source.repo` (`owner/name`) and `source.asset`, a file name holding `{version}`; the tag is the version, plain semver.
+A draft, a prerelease, a tag of another shape and a release without the asset are not listed.
+The download URL must be exactly `https://github.com/<repo>/releases/download/<tag>/<asset>`, in the tool YAML and in the API's `browser_download_url` alike, so a feed that points elsewhere is refused.
+An asset with a missing or null digest, a digest of another algorithm, or one not yet `uploaded` is refused too.
+An asset GitHub gives no digest, as for some older uploads, is never proposed.
+
+**Chosen:** a verifier of its own, `asset-digest`, rather than `publisher-sums`.
+GitHub computes the digest when the asset is uploaded, so the publisher never states it.
+The verifier's name says so, as `publisher-sums` names what it proves.
+
+What the digest proves: the bytes the engine downloaded are the bytes the release holds now, and the transfer through GitHub's download redirect did not change them.
+A release asset replaced under the same name gets a new digest, which the pin check in `plan` turns into a pin-mismatch issue, never a re-pin.
+
+What it gives up: provenance.
+The digest says nothing about who built the jar or from which source.
+A release published from a compromised maintainer account, or built by a compromised workflow, passes every check, because GitHub digests whatever was uploaded.
+`cooling` (48 hours for `jasolo`) is the only time an upstream has to notice and withdraw such a release, and `within: series` limits a bad release to a patch of the pinned series.
+A signed sums file, as kernel.org publishes, would close this, and nobody publishes one for jasolo.
+
+**`within: series`, on `0.<minor>` below 1.0:** a 0.x minor may rename the `JASOLO_GIT_ROOTS` variable the tool sets or change what it needs to start (today an existing `~/.m2/repository`), and no CI job runs jasolo.
+So a patch release is a PR, and a new minor opens a `go:build` issue for a person to check the tool file.
+What this gives up: at this project's pace most releases are minors, so most become issues.
+From 1.0 the series is the major, as semver promises compatibility within it.
 
 ## The review class
 

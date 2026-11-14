@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # The upstream engine on a fixture repository with every publisher faked (#2036): curl serves
 # fixtures by URL (a sha256sums.asc signed with a throwaway key, kernel.org's releases.json, the
-# JetBrains feed, .sha256 files and small tarballs), gh answers release, pull-request and issue
-# queries from fixtures and records what it is asked to change. Checks that validate holds each
+# JetBrains feed, .sha256 files, small tarballs and jasolo's jars), gh answers release (per
+# repository, with asset digests), pull-request and issue queries from fixtures and records what it
+# is asked to change. The github-asset source (#2206) is checked to list only semver releases with
+# the asset, and to refuse a jar that does not hash to its digest, a download URL that is not the
+# repository's release asset, and a missing, null or non-sha256 digest. Checks that validate holds each
 # manifest rule; that check passes a pin the publisher confirms and fails one it does not; that plan
 # prepares a bump commit as the app for a newer release of the pinned series, waits out cooling,
 # opens an issue for another series, a judgement item or a pin the publisher no longer confirms,
@@ -67,6 +70,27 @@ JB_URL='https://data.services.jetbrains.com/products/releases?code=IIU&type=rele
 jq -n --argjson a "$(jb_entry 2026.3 "$(date -u -d "@$((NOW - 10 * 86400))" +%F)")" --argjson b "$(jb_entry 2026.2.4 2026-10-01)" '{IIU: [$a, $b]}' > "$WORK/jb.json"
 serve "$JB_URL" "$WORK/jb.json"
 
+# ---- a GitHub release asset (jasolo) -------------------------------------------------------------------
+# The built-in pins 0.2.0; 0.2.1 is the newest of its series and cooled, 0.3.0 another series (an
+# issue). The draft, the prerelease, the non-semver tag and 0.2.3, which lacks the jar, are not listed.
+JS_DL=https://github.com/mkouba/jasolo/releases/download
+jar_sum() { printf 'jasolo-%s' "$1" | sha256sum | cut -d' ' -f1; }
+for v in 0.1.0 0.2.0 0.2.1 0.3.0; do printf 'jasolo-%s' "$v" > "$WORK/jasolo-$v.jar"; serve "$JS_DL/$v/jasolo-$v-runner.jar" "$WORK/jasolo-$v.jar"; done
+js_release() { # <tag> <published_at seconds ago> [draft] [prerelease]: one release, jar and binary
+    jq -n --arg t "$1" --arg at "$(date -u -d "@$((NOW - $2))" +%FT%TZ)" --argjson d "${3:-false}" --argjson p "${4:-false}" \
+        --arg dl "$JS_DL" --arg sum "$(jar_sum "$1")" '{tag_name: $t, draft: $d, prerelease: $p, published_at: $at, assets: [
+        {name: ("jasolo-" + $t + "-linux-x86_64"), state: "uploaded", digest: ("sha256:" + ("0" * 64)), browser_download_url: ($dl + "/" + $t + "/jasolo-" + $t + "-linux-x86_64")},
+        {name: ("jasolo-" + $t + "-runner.jar"), state: "uploaded", digest: ("sha256:" + $sum), browser_download_url: ($dl + "/" + $t + "/jasolo-" + $t + "-runner.jar")}]}'
+}
+{
+    js_release 0.3.0 86400; js_release 0.4.0-rc1 86400 false true; js_release 0.2.2 86400 true
+    js_release 0.2.3 86400 | jq '.assets |= map(select(.name | endswith(".jar") | not))'
+    js_release nightly 86400; js_release 0.2.1 $((3 * 86400)); js_release 0.2.0 $((10 * 86400)); js_release 0.1.0 $((20 * 86400))
+} | jq -s . > "$WORK/js.json"
+cp "$WORK/js.json" "$FIX/gh-releases-mkouba_jasolo.json"
+# js_edit <jq filter on the 0.2.1 release>: the feed with that release changed.
+js_edit() { jq "map(if .tag_name == \"0.2.1\" then $1 else . end)" "$WORK/js.json" > "$FIX/gh-releases-mkouba_jasolo.json"; }
+
 # ---- the images releases -----------------------------------------------------------------------------
 img_sum() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 mk_release() { # <tag>: its assets are named for its distribution and release, fedora-45
@@ -103,12 +127,14 @@ cat > "$WORK/bin/gh" <<'FAKE'
 echo "gh $(printf "%s" "$*" | tr "\n" " ")" >> "$CALLS"
 filter=""; args=(); for a in "$@"; do args+=("$a"); done
 jqf() { local i; for ((i=0; i<${#args[@]}; i++)); do [ "${args[i]}" = --jq ] && echo "${args[i+1]}"; done; }
+# Releases by repository: $FIX/gh-releases-<owner>_<name>.json, else the images repo's.
+rels() { local r="${1#repos/}"; r="${r%%/releases*}"; r="$FIX/gh-releases-${r//\//_}.json"; [ -f "$r" ] && echo "$r" || echo "$FIX/gh-releases.json"; }
 case "$1 $2" in
     "auth setup-git") exit 0 ;;
-    "api --paginate") [[ "$3" == repos/*/releases ]] && jq -r "$(jqf)" "$FIX/gh-releases.json" ;;
+    "api --paginate") [[ "$3" == repos/*/releases ]] && jq -r "$(jqf)" "$(rels "$3")" ;;
     "api repos/"*)
         case "$2" in
-            */releases/tags/*) tag="${2##*/}"; jq -r --arg t "$tag" '[.[] | select(.tag_name == $t)][0]' "$FIX/gh-releases.json" | jq -r "$(jqf)" ;;
+            */releases/tags/*) tag="${2##*/}"; jq -r --arg t "$tag" '[.[] | select(.tag_name == $t)][0]' "$(rels "$2")" | jq -r "$(jqf)" ;;
             */pulls/*) cat "$FIX/pr-${2##*/}.json" ;;
             */compare/*) echo "deadbeef 0" ;;
         esac ;;
@@ -177,6 +203,13 @@ run:
 Y
 }
 idea_file 2026.2.4 "$S24X" "$S24A" > "$REPO/common/src/main/resources/tools/idea-backend.yaml"
+# The real tool file, moved to 0.2.0 with the fixture jar's sum, so the engine reads the shape it ships
+# whatever version main pins.
+JASOLO_YAML=common/src/main/resources/tools/jasolo.yaml
+js_pin="$(sed -n 's|^  - url: https://github.com/mkouba/jasolo/releases/download/\([0-9.]*\)/.*|\1|p' "$SRC/$JASOLO_YAML")"
+[ -n "$js_pin" ] || fail "cannot read the version $JASOLO_YAML pins"
+sed "s/${js_pin//./\\.}/0.2.0/g; s/^    sha256: [0-9a-f]*\$/    sha256: $(jar_sum 0.2.0)/" "$SRC/$JASOLO_YAML" > "$REPO/$JASOLO_YAML"
+grep -q 'download/0.2.0/jasolo-0.2.0-runner.jar$' "$REPO/$JASOLO_YAML" || fail "the jasolo fixture does not pin 0.2.0"
 sed "s/fingerprint: [0-9A-F]*/fingerprint: $FPR/" "$SRC/upstream/manifest.yaml" > "$REPO/upstream/manifest.yaml"
 cd "$REPO" && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm fixture
 git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git" && git push -q origin main
@@ -209,6 +242,11 @@ bad_manifest '.items.kernel.files = ["appliance/kernel/nope.sh"]' "a file that d
 bad_manifest '.items.kernel.class = "judgement" | del(.items.kernel.verify) | del(.items.kernel.source)' "a judgement item without a source, which plan asks for its releases"
 bad_manifest 'del(.items.idea-backend.source.code)' "a JetBrains item without a product code"
 bad_manifest '.items.idea-backend.source.url-prefix = "https://evil.example/idea/"' "a JetBrains prefix off download.jetbrains.com"
+bad_manifest '.items.jasolo.source.repo = "jasolo"' "a GitHub asset item whose repo is not owner/name"
+bad_manifest '.items.jasolo.source.asset = "jasolo-runner.jar"' "a GitHub asset name without {version}"
+bad_manifest '.items.jasolo.source.asset = "../{version}/x.jar"' "a GitHub asset name that is a path"
+bad_manifest '.items.jasolo.verify.type = "publisher-sums"' "a GitHub asset item claiming the publisher's own sums"
+bad_manifest '.items.jasolo.cooling = "12h"' "a GitHub asset item cooling under the 24h floor"
 yq '.items.kernel.class = "judgement" | del(.items.kernel.verify)' "$REPO/upstream/manifest.yaml" > "$WORK/judgement.yaml"
 MANIFEST="$WORK/judgement.yaml" "$E" validate > /dev/null || fail "a judgement item needs no verify"
 # A review item (#2210) is proposed as a PR too, so it is specified as fully as a mechanical one.
@@ -220,7 +258,7 @@ bad_manifest '.items.idea-backend.class = "review" | .items.idea-backend.cooling
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------
-for i in kernel base-image idea-backend; do "$E" check "$i" > /dev/null || fail "check $i fails on a pin the publisher confirms"; done
+for i in kernel base-image idea-backend jasolo; do "$E" check "$i" > /dev/null || fail "check $i fails on a pin the publisher confirms"; done
 T="$WORK/tampered"; rm -rf "$T"; git -C "$REPO" worktree add -q "$T" HEAD
 sed -i 's/^KERNEL_SHA256="./KERNEL_SHA256="f/' "$T/appliance/kernel/build-kernel.sh"
 "$E" check kernel "$T" > /dev/null 2>&1 && fail "check kernel passed a sum the signed file does not give"
@@ -239,7 +277,9 @@ ls "$P/issues/" | grep -q '^kernel-7.3.json$' || fail "no issue for the 7.3 seri
 ls "$P/issues/" | grep -q '^base-image-fedora-46.json$' || fail "no issue for the fedora-46 line: $(ls "$P/issues")"
 [ "$(jq -r '.labels[0]' "$P/issues/kernel-7.3.json")" = go:design ] || fail "the kernel's series issue is not go:design"
 [ "$(jq -r '.labels[0]' "$P/issues/base-image-fedora-46.json")" = go:build ] || fail "the base image's line issue is not go:build"
-for i in kernel base-image idea-backend; do
+[ "$(action "$P" jasolo)" = pr ] && [ "$(version "$P" jasolo)" = 0.2.1 ] || fail "jasolo: expected a PR for 0.2.1: $(cat "$P/plan.tsv")"
+[ "$(jq -r '.labels[0]' "$P/issues/jasolo-0.3.json" 2>/dev/null)" = go:build ] || fail "no go:build issue for jasolo's 0.3 series: $(ls "$P/issues")"
+for i in kernel base-image idea-backend jasolo; do
     c="$(jq -r .commit "$P/$i.json")"
     [ "$(git -C "$REPO" log -1 --format=%ae "$c")" = "$APP_EMAIL" ] || fail "$i: the bump is not committed as the app"
     [ "$(git -C "$REPO" diff --name-only "$BASE" "$c")" = "$(yq -r ".items[\"$i\"].files[0]" "$REPO/upstream/manifest.yaml")" ] || fail "$i: the bump touches more than the item's file"
@@ -249,6 +289,64 @@ done
 grep -q "idea-IU" "$P/idea-backend.json" || true
 [ "$(git -C "$REPO" show "$(jq -r .commit "$P/idea-backend.json"):common/src/main/resources/tools/idea-backend.yaml" | grep -c "$S3A")" = 1 ] || fail "the IDEA bump has the wrong aarch64 sum"
 echo "plan: ok"
+
+# ---- the github-asset source (jasolo) ----------------------------------------------------------------
+[ "$("$E" current jasolo)" = 0.2.0 ] || fail "jasolo: current is not 0.2.0: $("$E" current jasolo)"
+[ "$("$E" releases jasolo | tr '\n' ' ')" = "0.1.0 0.2.0 0.2.1 0.3.0 " ] \
+    || fail "jasolo: a draft, a prerelease, a non-semver tag or a release without the jar was listed: $("$E" releases jasolo | tr '\n' ' ')"
+# The bump rewrites the URL, the sum and the description's version, and nothing else.
+J="$(jq -r .commit "$P/jasolo.json")"
+git -C "$REPO" show "$J:$JASOLO_YAML" > "$WORK/jasolo-bumped.yaml"
+[ "$(diff "$REPO/$JASOLO_YAML" "$WORK/jasolo-bumped.yaml" | grep -c '^[<>]')" = 6 ] || fail "jasolo: the bump changes more than three lines: $(diff "$REPO/$JASOLO_YAML" "$WORK/jasolo-bumped.yaml")"
+J_DIR="$(mktemp -d)"; mkdir -p "$J_DIR/$(dirname "$JASOLO_YAML")"; cp "$WORK/jasolo-bumped.yaml" "$J_DIR/$JASOLO_YAML"
+TREE="$J_DIR" ITEM=jasolo bash -c '. "$1/lib.sh"; load_source jasolo; src_fields' _ "$REPO/upstream/engine" > "$WORK/jasolo-fields" \
+    || fail "jasolo: cannot read the bumped fields"
+printf 'description=jasolo 0.2.1, an MCP server that reads the Java sources of dependencies\nurl=%s\nsha256=%s\n' \
+    "$JS_DL/0.2.1/jasolo-0.2.1-runner.jar" "$(jar_sum 0.2.1)" | diff - "$WORK/jasolo-fields" > /dev/null \
+    || fail "jasolo: the bumped fields are not 0.2.1's: $(cat "$WORK/jasolo-fields")"
+rm -rf "$J_DIR"
+# jasolo_refused <what> <log pattern>: plan of jasolo alone fails, for that reason.
+jasolo_refused() {
+    UPSTREAM_ONLY=jasolo "$E" plan "$WORK/plan-js-$RANDOM" > "$WORK/js.log" 2>&1 && fail "jasolo: $1 was accepted"
+    grep -q -- "$2" "$WORK/js.log" || fail "jasolo: $1 was not what failed: $(tail -3 "$WORK/js.log")"
+    cp "$WORK/js.json" "$FIX/gh-releases-mkouba_jasolo.json"
+}
+# A jar that does not hash to GitHub's digest, re-hashed.
+serve "$JS_DL/0.2.1/jasolo-0.2.1-runner.jar" "$WORK/jasolo-0.3.0.jar"
+jasolo_refused "a jar that does not hash to its digest" "but GitHub's digest says"
+serve "$JS_DL/0.2.1/jasolo-0.2.1-runner.jar" "$WORK/jasolo-0.2.1.jar"
+# A download URL that leaves the repository, or names another asset, whatever the API says.
+js_edit '.assets |= map(if (.name | endswith(".jar")) then .browser_download_url = "https://github.com/evil/jasolo/releases/download/0.2.1/jasolo-0.2.1-runner.jar" else . end)'
+jasolo_refused "a download URL in another repository" "evil/jasolo"
+js_edit '.assets |= map(if (.name | endswith(".jar")) then .browser_download_url = "https://objects.example/jasolo-0.2.1-runner.jar" else . end)'
+jasolo_refused "a download URL off github.com" "objects.example"
+# A digest that is missing, null or not a sha256.
+js_edit '.assets |= map(if (.name | endswith(".jar")) then del(.digest) else . end)'
+jasolo_refused "an asset without a digest" "has no sha256 digest"
+js_edit '.assets |= map(if (.name | endswith(".jar")) then .digest = null else . end)'
+jasolo_refused "an asset whose digest is null" "has no sha256 digest"
+js_edit '.assets |= map(if (.name | endswith(".jar")) then .digest = "sha1:0123456789012345678901234567890123456789" else . end)'
+jasolo_refused "a sha1 digest" "has no sha256 digest"
+js_edit '.assets |= map(if (.name | endswith(".jar")) then .state = "starter" else . end)'
+jasolo_refused "an asset still uploading" "is not uploaded"
+# Without the re-hash (check, a carried PR) the digest alone is taken, so a fresh plan is still exact.
+serve "$JS_DL/0.2.1/jasolo-0.2.1-runner.jar" "$WORK/jasolo-0.3.0.jar"
+J_DIR="$WORK/js-norehash"; rm -rf "$J_DIR"; git -C "$REPO" worktree add -q --detach "$J_DIR" "$BASE"
+UPSTREAM_REHASH=0 "$E" apply jasolo 0.2.1 "$J_DIR" > /dev/null || fail "jasolo: apply without the re-hash failed"
+diff "$J_DIR/$JASOLO_YAML" "$WORK/jasolo-bumped.yaml" > /dev/null || fail "jasolo: apply without the re-hash wrote another file than plan"
+git -C "$REPO" worktree remove --force "$J_DIR"
+serve "$JS_DL/0.2.1/jasolo-0.2.1-runner.jar" "$WORK/jasolo-0.2.1.jar"
+# A cooling period not over waits; a pinned release whose digest changed at GitHub is an issue.
+jq 'map(if .tag_name == "0.2.1" then .published_at = (now | todate) else . end)' "$WORK/js.json" > "$FIX/gh-releases-mkouba_jasolo.json"
+UPSTREAM_ONLY=jasolo "$E" plan "$WORK/plan-js-cool" > /dev/null 2>&1 || fail "jasolo: plan failed on a fresh release"
+[ "$(action "$WORK/plan-js-cool" jasolo)" = wait ] || fail "jasolo: a fresh 0.2.1 did not wait: $(cat "$WORK/plan-js-cool/plan.tsv")"
+jq --arg s "sha256:$(jar_sum other)" 'map(if .tag_name == "0.2.0" then .assets |= map(if (.name | endswith(".jar")) then .digest = $s else . end) else . end)' \
+    "$WORK/js.json" > "$FIX/gh-releases-mkouba_jasolo.json"
+UPSTREAM_ONLY=jasolo "$E" plan "$WORK/plan-js-pin" > /dev/null 2>&1 || fail "jasolo: plan failed on a republished pin"
+[ "$(action "$WORK/plan-js-pin" jasolo)" = issue ] && [ -f "$WORK/plan-js-pin/issues/jasolo-pin-mismatch.json" ] \
+    || fail "jasolo: a changed digest for the pinned release did not become an issue: $(cat "$WORK/plan-js-pin/plan.tsv")"
+cp "$WORK/js.json" "$FIX/gh-releases-mkouba_jasolo.json"
+echo "github-asset: ok"
 
 # An open PR of ours that already carries the version is not re-hashed: no tarball is fetched.
 jq -n '[{body: "x\n\n<!-- upstream-watch: idea-backend 2026.3 -->", headRepositoryOwner: {login: "Sanne"}, isCrossRepository: false}]' > "$FIX/prs.json"
@@ -343,9 +441,14 @@ echo "plan fail-closed: ok"
 P="$(plan verify)"
 verify() { "$E" verify-trees "$BASE" "$1" "$2" "$3" > "$WORK/verify.log" 2>&1; }
 # The app's own regeneration passes; anything beside it fails.
-for i in kernel base-image idea-backend; do
+for i in kernel base-image idea-backend jasolo; do
     verify "$(jq -r .commit "$P/$i.json")" "$APP_LOGIN" yes || { cat "$WORK/verify.log" >&2; fail "the engine's own $i bump failed verification"; }
 done
+J="$(jq -r .commit "$P/jasolo.json")"
+jbad="$(commit_from "$J" jbad sed -i "s/$(jar_sum 0.2.1)/$(jar_sum 0.3.0)/" "$JASOLO_YAML")"
+verify "$jbad" "$APP_LOGIN" yes && fail "an app PR for jasolo with a sum other than GitHub's digest passed"
+verify "$jbad" "someone" yes && fail "a person's jasolo bump with a sum other than GitHub's digest passed"
+verify "$J" "someone" yes || { cat "$WORK/verify.log" >&2; fail "a person's jasolo bump with GitHub's digest failed"; }
 K="$(jq -r .commit "$P/kernel.json")"
 extra="$(commit_from "$K" extra bash -c 'echo x > appliance/kernel/isx.config')"
 verify "$extra" "$APP_LOGIN" yes && fail "an app PR with a file beside the bump passed"
@@ -406,7 +509,7 @@ echo "verify: ok"
 # ---- issues and track --------------------------------------------------------------------------------
 : > "$CALLS"
 "$E" issues "$P" > /dev/null || fail "issues failed"
-[ "$(grep -c '^gh issue create' "$CALLS")" = 2 ] || fail "expected two issues created: $(grep 'issue create' "$CALLS" | wc -l)"
+[ "$(grep -c '^gh issue create' "$CALLS")" = 3 ] || fail "expected three issues created: $(grep 'issue create' "$CALLS" | wc -l)"
 : > "$CALLS"; "$E" issues "$P" > /dev/null
 [ "$(grep -c '^gh issue create' "$CALLS")" = 0 ] || fail "an open issue was created again"
 # An EOL issue of another series, old title or new, is closed; nothing else is.
