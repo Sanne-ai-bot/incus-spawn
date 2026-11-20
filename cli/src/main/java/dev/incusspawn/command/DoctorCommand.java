@@ -361,7 +361,17 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkConfigFile());
         findings.add(checkCaCertificate());
         findings.addAll(checkCredentials());
+        findings.addAll(hostAgentFindings(HostAgentProbe.probe()));
         return findings;
+    }
+
+    /**
+     * The coding agents already set up on the host (#2408), one note each: what init will be able
+     * to reuse. A note, so an agent that is not signed in never turns a clean run into a problem.
+     */
+    static List<Finding> hostAgentFindings(List<HostAgentProbe.HostAgent> agents) {
+        if (agents.isEmpty()) return List.of(Finding.note("Coding agents on this host", "(none found)"));
+        return agents.stream().map(a -> Finding.note(a.title() + " on this host", "(" + a.summary() + ")")).toList();
     }
 
     /**
