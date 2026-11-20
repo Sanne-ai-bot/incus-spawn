@@ -217,6 +217,29 @@ class UnbakedGitIdentityTest {
                 Map.of("github", "other#0123456789ab"), Set.of(), SETUPS));
     }
 
+    /**
+     * The child of a template built before {@code name} was configured, built on the same
+     * account (#2397): the parent's {@code .gitconfig} has the API's name, which gh's setup keeps,
+     * so the build re-derives it rather than stamping the configured name over it.
+     */
+    @Test
+    void aChildBuiltAfterTheConfiguredNameChangedReDerivesItsParentsIdentity() throws Exception {
+        var named = Jjq.spawnConfig("""
+                github:
+                  accounts:
+                    me:
+                      token: "ghp_userA"
+                      email: "me@example.com"
+                      name: "Custom"
+                  default: me
+                """);
+        var gh = new RecordingGh();
+        var stamps = build(named, Map.of("github", new GhSetup().bakedAccountIdentity(withToken(), "me")),
+                gh, false, new ArrayList<>());
+        assertEquals(List.of("me"), gh.rebaked, "the parent's [user] is not the configured one");
+        assertEquals(verified(new GhSetup().bakedAccountIdentity(named, "me")), stamps);
+    }
+
     @Test
     void aNamespaceThatCannotReDeriveIsNeverReDerived() {
         assertEquals(Set.of(), BuildAccounts.toRederive(Map.of("claude", "api-key"),
