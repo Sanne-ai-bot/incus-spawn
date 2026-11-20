@@ -91,6 +91,10 @@ public class InitCommand extends BaseCommand {
     @Option(name = "no-service", hasValue = false, description = "Do not install the services, without asking")
     boolean noService;
 
+    @Option(name = AgentGitIdentityStep.FLAG, hasValue = false,
+            description = "Let agents with no GitHub account commit under this host's Git name and email, without asking")
+    boolean gitIdentityFromHost;
+
     @Option(name = "no-sudo", hasValue = false,
             description = "Run nothing as root: write the steps that need root as a script for you to run, then carry on")
     boolean noSudo;
@@ -881,8 +885,19 @@ public class InitCommand extends BaseCommand {
         totalKnown = true;
         for (var step : credentialSteps) begin(step);
         credentials.closeHttpClient();
+        offerAgentGitIdentity();
         gitRemoteHelper().run().run();
         for (var step : finish) begin(step);
+    }
+
+    /** Once the credentials are set: this host's Git identity for agents no GitHub account names (#2410). */
+    void offerAgentGitIdentity() {
+        AgentGitIdentityStep.offer(SpawnConfig.load(), prompts(), gitIdentityFromHost, this::hostGitIdentity);
+    }
+
+    /** This host's Git identity, or null; tests answer it instead. */
+    dev.incusspawn.config.GitIdentity hostGitIdentity() {
+        return AgentGitIdentityStep.fromHost();
     }
 
     /** The steps chosen at Credential Setup, which {@link #credentialSteps} runs. */

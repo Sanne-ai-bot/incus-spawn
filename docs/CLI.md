@@ -20,7 +20,7 @@ Running it again is safe, and is how you add, rename or remove an account.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
-isx init [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--format=table|plain|json]
+isx init [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--git-identity-from-host] [--format=table|plain|json]
 isx init --plan [--format=table|plain|json]
 ```
 
@@ -35,6 +35,7 @@ Each question that is not a secret has a flag that answers it, with or without a
 | `--code-dir=<dir>,...` | Adds these directories to the code directories |
 | `--fork-templates` | Forks the community templates with `gh` if you have no copy, then clones and adds it |
 | `--service`, `--no-service` | Whether to install the proxy as a service, and on macOS the VM too |
+| `--git-identity-from-host` | Lets agents with no GitHub account commit under your own `git config` name and email ([details](CONFIGURATION.md#a-git-identity-for-agents)) |
 
 There is no flag, variable or piped input for a secret.
 Adding a missing credential stays your step, which you do with the `isx account add` command.
