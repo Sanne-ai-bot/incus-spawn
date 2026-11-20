@@ -1429,3 +1429,17 @@ Past it, one `HEAD`, in the background within `max-stale` and before the serve a
 So the count does not grow with the number of instances: it is one burst of about 1,700 `HEAD`s for this build, once per `fresh` window.
 `max-stale` only moves those requests between the background and the foreground, and does not change their number.
 That is why Central's longer default lengthens `fresh`, from 2 hours to 12, which brings a working day's bursts from about five down to one or two.
+
+## Reading the event log with task runs booked (issue #2428)
+
+Measured 2026-11-20 on a Linux x86_64 box, JVM, `EventLogReader.read` on a synthetic full log: 80 MiB in one file, 295,825 lines, 40 instances, one task start line per 500 model calls.
+Five reads in one JVM, the last three after warm-up:
+
+| Build | Warm read |
+| --- | --- |
+| `main` | 378-383 ms |
+| with `TaskRuns` | 439-447 ms |
+
+Booking calls to runs keeps every model call of the read in memory until the end, and costs about 65 ms, 17%, on the largest log the proxy keeps.
+It is paid only by the overview's on-demand read, never by `isx list`.
+Not done: adding a name's calls to its unbooked total before its first task line, which would depend on the files' order across a rollover.
