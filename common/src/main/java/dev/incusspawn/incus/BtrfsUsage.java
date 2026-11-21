@@ -252,6 +252,19 @@ public final class BtrfsUsage {
      */
     public static boolean rescan(String poolName) {
         if (poolName == null || !isSafePoolName(poolName)) return false;
+        // A delete is between its threshold and its settle: its drops would cancel this rescan, and
+        // its settle starts one, so none is scheduled here (#2435)
+        var lock = PoolQgroupLock.acquire(poolName, java.time.Duration.ZERO, false);
+        if (lock.isEmpty()) return true;
+        try {
+            return rescanNow(poolName);
+        } finally {
+            lock.get().release();
+        }
+    }
+
+    /** {@link #rescan} for a caller that holds the pool's lock, a settle. */
+    private static boolean rescanNow(String poolName) {
         try {
             if (Platform.isMacOS()) {
                 var reply = VmAgentClient.btrfsRescan(poolName).orElse("");
@@ -342,6 +355,29 @@ public final class BtrfsUsage {
         // rescan wait would only delay the delete. Read once, for that and the write.
         var fsid = Platform.isLinux() ? fsid(poolName).orElse(null) : null;
         if (Platform.isLinux() && fsid == null) return new DropAccounting(status, -1);
+        // Held until the settle has started its rescan: another isx process dropping meanwhile would
+        // cancel it (#2435). Without the lock, this delete is traced as before, which touches nothing.
+        var lock = PoolQgroupLock.acquire(poolName, PoolQgroupLock.WAIT, true);
+        if (lock.isEmpty()) return new DropAccounting(status, -1);
+        lock.get().keep();
+        DropAccounting prepared = new DropAccounting(status, -1);
+        try {
+            prepared = setThresholdUnderLock(poolName, status, fsid, lock.get().waited());
+            return prepared;
+        } finally {
+            // A pool that traces drops, or whose write failed, has no settle to release the lock
+            if (!prepared.status().skipsDropAccounting()) PoolQgroupLock.releaseHeld(poolName);
+        }
+    }
+
+    private static DropAccounting setThresholdUnderLock(String poolName, QgroupStatus status, String fsid,
+                                                        boolean waitedForLock) {
+        // What was read before the wait is stale when another process held the lock: it may have put
+        // the threshold back, or left the pool inconsistent for the wait below
+        if (waitedForLock) {
+            status = status(poolName);
+            if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
+        }
         boolean set;
         try {
             // The flag stays set while a rescan runs, so a consistent pool has none to wait for.
@@ -387,6 +423,8 @@ public final class BtrfsUsage {
             else if (Platform.isLinux()) writeThreshold(poolName, threshold);
         } catch (RuntimeException e) {
             // Best-effort, at exit
+        } finally {
+            PoolQgroupLock.releaseHeld(poolName);
         }
     }
 
@@ -443,9 +481,12 @@ public final class BtrfsUsage {
             }
             runBtrfsResult(SETTLE_TIMEOUT_SECONDS, "quota", "rescan", "-W", mount);
             runBtrfsResult(PROBE_TIMEOUT_SECONDS, "qgroup", "show", "-re", "--raw", "--sync", mount);
-            if (status(poolName).untrusted()) rescan(poolName);
+            if (status(poolName).untrusted()) rescanNow(poolName);
         } catch (RuntimeException e) {
             // Best-effort: the deletes already succeeded, and the TUI, a build or doctor repair it later
+        } finally {
+            // Held since the threshold was set; the rescan is started, or will not be by this settle
+            PoolQgroupLock.releaseHeld(poolName);
         }
     }
 
