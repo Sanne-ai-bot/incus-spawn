@@ -73,7 +73,7 @@ class ReleasePgoWorkflowTest {
         var jobs = jobs();
         var names = new ArrayList<String>();
         names.addAll(jobs.asMap().keySet());
-        assertTrue(names.containsAll(List.of("profiles", "build", "release")), "jobs: " + names);
+        assertTrue(names.containsAll(List.of("profiles", "build", "checksums", "release")), "jobs: " + names);
         for (var name : names) {
             var job = jobs.path(name);
             if (name.equals("profiles") || name.equals("build")) {
@@ -96,5 +96,24 @@ class ReleasePgoWorkflowTest {
         var release = jobs.path("release").pathText("if", "");
         assertTrue(release.contains("startsWith(github.ref, 'refs/tags/v')"),
                 "the release job publishes: it must run for a pushed v* tag only. Found: " + release);
+    }
+
+    @Test
+    void everyJobChecksOutTheRunsCommitNotTheRefsTip() throws IOException {
+        var jobs = jobs();
+        var checkedOut = new ArrayList<String>();
+        for (var entry : jobs.asMap().entrySet()) {
+            for (var step : entry.getValue().path("steps").asList()) {
+                if (!step.pathText("name", "").equals("Checkout")) continue;
+                var run = step.pathText("run", "");
+                // A clone of $GITHUB_REF_NAME is the ref's tip when the job starts, so two jobs could
+                // build different commits and the profiles not be the build's (#2750)
+                assertTrue(run.contains("\"$GITHUB_SHA\"") && run.contains("git checkout -q --detach FETCH_HEAD"),
+                        entry.getKey() + " must check out the run's commit, $GITHUB_SHA");
+                assertFalse(run.contains("GITHUB_REF_NAME"), entry.getKey() + " checks out the ref's tip");
+                checkedOut.add(entry.getKey());
+            }
+        }
+        assertTrue(checkedOut.containsAll(List.of("profiles", "build", "checksums", "release")), "checked out: " + checkedOut);
     }
 }
